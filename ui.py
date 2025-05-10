@@ -296,8 +296,8 @@ def render_main():
     st.write(f"📌 登録NGワード数: {len(ng_dict)}")
 
     # 展開済みNGワードを確認
-    st.markdown("### 🧪 展開済みNGワード一覧（最大50件）")
-    for word, detail in list(ng_dict.items())[:50]:
+    st.markdown("### 🧪 展開済みNGワード一覧（最大5件）")
+    for word, detail in list(ng_dict.items())[:5]:
         st.write(f"🔹 {word} → カテゴリ: {detail['category']}")
 
 
