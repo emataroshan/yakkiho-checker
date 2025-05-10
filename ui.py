@@ -5,13 +5,15 @@
 
 import streamlit as st
 import requests
+import pandas as pd
 from typing import Any, List, Dict
 from data_processing import ViolationItem
 import time 
+import os
 
 # ===== 用途区分フィルタの on/off =====
 # Comment out the next line to disable usage-based filtering
-USE_USAGE_FILTER = False  # True -> ON, False -> OFF
+USE_USAGE_FILTER = True  # True -> ON, False -> OFF
 # ================================
 
 # 以下、データ処理モジュールから主要な関数をインポート
@@ -24,6 +26,7 @@ from data_processing import (
     highlight_prohibited_phrases,
     normalize_text,
 )
+import pandas as pd
 
 # ─────────────────────────────────────────────────
 # ★ Googleフォーム連携設定
@@ -111,21 +114,10 @@ def merge_same_ng_violations(
 @st.cache_data(show_spinner=False)
 def get_ng_words(
     selected_category: str,
-    selected_usage: str
+    selected_usage: str,
+    selected_product: str
 ) -> Dict[str, Any]:
-    """
-    JSON 定義ファイルから選択カテゴリに対応するサブカテゴリを抽出し、
-    NGワード辞書を構築して返す。
-    キャッシュ付きで一度だけ実行。
-
-    Args:
-        selected_category (str): "一般化粧品" または "医薬部外品（薬用化粧品）"
-    Returns:
-        Dict[str, Any]: {
-            "ng_dict": { ... },        # NGワード詳細マップ
-            "subcategories": [ ... ]   # 選択カテゴリに属するサブカテゴリ一覧
-        }
-    """
+    
     option_map = {
         "一般化粧品": "一般化粧品",
         "医薬部外品（薬用化粧品）": "薬用化粧品"
@@ -134,23 +126,23 @@ def get_ng_words(
     data = load_json("NGword.json")
     # グローバルカテゴリ"化粧品等"からサブカテゴリを抽出
     subcats = extract_ng_data_by_subcategory(data)
-    # "共通" + 選択カテゴリサブカテゴリ
-    selected_list = subcats["共通"] + subcats[option_map[selected_category]]
-    # 用途区分フィルタを実行し、NGワードパターンなど詳細マップを生成
-    # USE_USAGE_FILTER=True の場合のみ用途区分をフィルタ
-    if USE_USAGE_FILTER:
-        filtered_list = [sub for sub in selected_list if selected_usage in sub.get("用途区分", [])]
-    else:
-        filtered_list = selected_list
-    ng_dict = extract_ng_data_from_subcategories({"共通": filtered_list})
-    return ng_dict
+       
+    ng_dict = extract_ng_data_from_subcategories({
+        "共通": subcats["共通"],
+        option_map[selected_category]: subcats[option_map[selected_category]]
+    }, selected_usage, selected_product)
+
+    return {
+        "ng_dict": ng_dict,
+        "subcategories": subcats["共通"] + subcats[option_map[selected_category]]
+    }
 
 
 # ---------------------------
 # サイドバー処理：大区分・用途区分・フィードバックなどを集約
 # ---------------------------
 def render_sidebar():
-  
+ 
     """
     サイドバーに以下を表示・選択させる:
       1. 大区分（一般化粧品 / 医薬部外品）
@@ -190,23 +182,52 @@ def render_sidebar():
 
     # 1) 大区分選択ラジオ
     st.sidebar.title("💊 カテゴリを選択")
-    selected_display = st.sidebar.radio(
-        "",
+    selected_category = st.sidebar.radio(
+        "💊 カテゴリを選択",
         options=["一般化粧品", "医薬部外品（薬用化粧品）"],
-        index=0
-    )
+        index=0,
+    )   
     # 2) 用途区分の候補を固定順序で用意
     if USE_USAGE_FILTER:
         # 用途の候補はカテゴリ別に変わる
-        if selected_display == "医薬部外品（薬用化粧品）":
-            all_usages = ["スキンケア", "ヘアケア", "ボディケア", "オーラルケア"]
-        else:
-            all_usages = ["スキンケア", "ヘアケア", "メイクアップ", "ボディケア", 
-                          "フレグランス", "ネイルケア", "オーラルケア"]
-        selected_usage = st.sidebar.selectbox("🎯 用途・部位を選択", options=all_usages, index=0)
+        all_usages = (
+            ["スキンケア","ヘアケア","メイクアップ","ボディケア","フレグランス","ネイルケア","オーラルケア"]
+            if selected_category == "一般化粧品"
+            else ["スキンケア","ヘアケア","ボディケア","オーラルケア"]
+        )
+        selected_usage = st.sidebar.selectbox("🎯 用途を選択", all_usages)
     else:
         # フィルタOFF時は空文字を返す
         selected_usage = ""
+
+    # ③ JSON からサブカテゴリを取得して絞り込み
+    data    = load_json("NGword.json")
+    subcats = extract_ng_data_by_subcategory(data)
+    option_map = {"一般化粧品": "一般化粧品", "医薬部外品（薬用化粧品）": "薬用化粧品"}
+    raw_list = subcats["共通"] + subcats[option_map[selected_category]]
+
+#    # ★ デバッグ: フィルタ後のサブカテゴリ名を確認
+#    st.sidebar.write("🎯 フィルタ後サブカテゴリ:", [sub.get("name") for sub in filtered])
+
+    # ④ フィルタ後の JSON 定義から製品名一覧を収集
+    product_set = set()
+    for sub in raw_list:
+#        # ★ デバッグ: 各サブカテゴリの中身を確認
+#        st.sidebar.write(f"— サブカテゴリ {sub.get('name')}")
+
+        for group in sub.get("NGワードと禁止理由", []):
+            # 用途フィルタONなら、ここで弾く
+            if USE_USAGE_FILTER and selected_usage not in group.get("用途区分", []):
+                continue
+            for p in group.get("製品名", []):
+                product_set.add(p)
+    product_list = sorted(product_set)
+
+#    st.sidebar.write("🔍 JSONを読み込んでいるパス:", os.path.abspath("NGword.json"))
+#    st.sidebar.write("🔍 製品候補:", product_list)
+
+    # 製品選択ドロップダウン
+    selected_product = st.sidebar.selectbox("🧴 製品を選択", product_list)
 
     # 区切り線
     st.sidebar.markdown("---")
@@ -224,8 +245,7 @@ def render_sidebar():
     # 4) 注意事項
     st.sidebar.title("ℹ️ 注意事項")
     st.sidebar.markdown("このツールは参考情報です。最終判断は専門家にご相談ください。")
-    return selected_display, selected_usage
-
+    return selected_category, selected_usage, selected_product
 # ---------------------------
 # フィードバック送信処理（UI側ローカル定義）
 # ---------------------------
@@ -258,26 +278,30 @@ def render_main():
     """
     st.title("💊 薬機法表現チェックアプリ")
 
-    # サイドバーからカテゴリ・用途を取得
-    selected_category, selected_usage = render_sidebar()
+    # サイドバーからカテゴリ・用途・製品名を取得
+    selected_category, selected_usage, selected_product = render_sidebar()
 
-    # NGワード辞書を一度だけ取得
-    ng_dict = get_ng_words(selected_category, selected_usage)
+    data = load_json("NGword.json")# 🔧 get_ng_words によるフィルタ付き NGワード取得
+    ng_data = get_ng_words(selected_category, selected_usage, selected_product)
+    ng_dict = ng_data["ng_dict"]
 
-# ─────────────────────────────────────────────────
-#   ◎ デバッグ表示：サブカテゴリ／NGワード数
-#    option_map = {"一般化粧品": "一般化粧品",
-#                  "医薬部外品（薬用化粧品）": "薬用化粧品"}
-#    subcats = extract_ng_data_by_subcategory(load_json("NGword.json"))
-#    raw_list = subcats["共通"] + subcats[option_map[selected_category]]
-#    filtered_subcats = [sub for sub in raw_list if selected_usage in sub.get("用途区分", [])]
-#    st.markdown("### 📄 使用中サブカテゴリ一覧 (デバッグ)")
-#    for sub in filtered_subcats:
-#        st.write({"id": sub.get("id"), "name": sub.get("name")})
-#    st.markdown("### 🔍 登録NGワード一覧（上位10件） (デバッグ)")
-#    st.write(list(ng_dict.keys())[:10])
-#    st.write(f"🔢 件数：{len(ng_dict)} 件")
-# ─────────────────────────────────────────────────
+
+
+
+# 📊 デバッグ出力：選択情報と NG ワード数
+    st.markdown("### 🧪 デバッグ情報")
+    st.write(f"📌 選択カテゴリ: {selected_category}")
+    st.write(f"📌 選択用途区分: {selected_usage}")
+    st.write(f"📌 選択製品名: {selected_product}")
+    st.write(f"📌 登録NGワード数: {len(ng_dict)}")
+
+    # 展開済みNGワードを確認
+    st.markdown("### 🧪 展開済みNGワード一覧（最大50件）")
+    for word, detail in list(ng_dict.items())[:50]:
+        st.write(f"🔹 {word} → カテゴリ: {detail['category']}")
+
+
+
 
     # 広告文入力エリア
     ad_text = st.text_area("カテゴリ選択後、広告文を入力してください", height=200).strip()
@@ -285,35 +309,30 @@ def render_main():
         if not ad_text:
             st.warning("広告文を入力してください。")
             return
-        # デバッグ出力
-        # st.write("🐞 [DEBUG] ad_text:", repr(ad_text))
 
         # フォームに記録
         submit_ad_text(ad_text)
+
         # NGチェック実行
         violations = check_advertisement_with_categories_masking(ad_text, ng_dict) or []
-        # ─────────────────────────────────────────────────
-        # 対象成分の文脈チェック（特定成分の配合目的の記載確認用）
-        # ingredient_violations = check_ingredient_context(ad_text, "{SEIBUN}", "{MOKUTEKI}", exclusion_placeholder="{JYOGAI}", window=70) or []
-        ingredient_violations = []  # チェック対象成分の文脈検証を一旦無効化
 
-        # 対象ワードの文脈チェック（どちらも含む場合はエラー）
-        # 安全性の保証用に使うかも
-        # 特記成分の有効成分とまぎらわしい表現でも使うかも）
-        #negative_violations = check_ingredient_context_negative(ad_text, "{SEIBUN}", "{NG_FORBIDDEN}", window=50)
-        # ─────────────────────────────────────────────────
-        all_violations = violations + ingredient_violations
 
-        # デバッグ：マッチ位置確認
-        # for v in all_violations:
-        #     st.write(f"位置:{v['開始位置']}-{v['終了位置']} {v.get('表現')}")
 
-        # 重複統合／同語統合
-        all_violations = merge_violations(all_violations)
+        # NG検出結果表示（デバッグ用）
+        st.markdown("### 🔍 検出された NG ワード（デバッグ）")
+        if violations:
+            for v in violations:
+                st.write(f"✅ '{v['表現']}'（位置: {v['開始位置']}〜{v['終了位置']}） - カテゴリ: {v['カテゴリ']}")
+        else:
+            st.write("（検出なし）")
+        
+        # 重複統合＆同語統合
+        all_violations = merge_violations(violations)
         all_violations = merge_same_ng_violations(all_violations)
         all_violations.sort(key=lambda x: x["開始位置"])
 
-        # 結果表示
+
+        # 結果の視覚表示
         if all_violations:
             st.warning(f"⚠️ 気になる表現が {len(all_violations)} 件見つかりました！")
             st.write(highlight_prohibited_phrases(ad_text, all_violations), unsafe_allow_html=True)
@@ -323,7 +342,7 @@ def render_main():
                 st.markdown(f"**<span style='color:red'>{label}</span>**", unsafe_allow_html=True)
                 st.write(v.get("指摘事項") or v.get("message"))
                 impr = v.get("改善提案") or []
-                if isinstance(impr, str): impr=[impr]
+                if isinstance(impr, str): impr = [impr]
                 if impr:
                     st.markdown(f"<span style='color:#FF8C00;font-weight:bold'>💡 改善提案:</span> {'、'.join(impr)}", unsafe_allow_html=True)
                 ex = v.get("適正表現例") or []
