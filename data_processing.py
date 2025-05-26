@@ -20,6 +20,7 @@ from typing import (
     TypedDict, 
 )
 
+
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.DEBUG)  # DEBUGレベルでログ出力（開発時）
 # コンソール用
@@ -306,8 +307,8 @@ def compile_ng_word(phrase: str) -> Pattern[str]:
 # --- サブカテゴリ分け用定数 ---
 GLOBAL_CATEGORY_NAME: str = "化粧品等"
 COMMON_SUBCATEGORIES: List[str] = ["共通"]
-GENERAL_SUBCATEGORIES: List[str] = ["一般化粧品"]
-MEDICINAL_SUBCATEGORIES: List[str] = ["薬用化粧品"]
+GENERAL_SUBCATEGORIES: List[str] = ["一般"]
+MEDICINAL_SUBCATEGORIES: List[str] = ["薬用"]
 
 def extract_ng_data_by_subcategory(
     data: Dict[str, Any]
@@ -340,6 +341,8 @@ def extract_ng_data_from_subcategories(
     subcategory_data: Dict[str, List[Dict[str, Any]]],
     selected_usage: Optional[str] = None,
     selected_product: Optional[str] = None,
+    # JSONの「一般」か「薬用」を選択
+    category_type: str = "一般",
 ) -> Dict[str, NGWordDetail]:
     
     # デバッグ出力
@@ -365,11 +368,34 @@ def extract_ng_data_from_subcategories(
                 if not prod_list or selected_product not in prod_list:
                     continue
 
-                # NGワードの登録
-                reason               = item.get("理由", "")
-                suggestion           = item.get("改善提案", "")
-                appropriate_examples = item.get("適正表現例", [])
-                exclusion_list       = item.get("除外表現", [])
+                # 「理由」を抽出し、薬用が空なら一般をフォールバック
+                raw_reason = item.get("理由", "")
+                if isinstance(raw_reason, dict):
+                    reason = raw_reason.get(category_type, "").strip()
+                    if category_type == "薬用" and not reason:
+                        reason = raw_reason.get("一般", "").strip()
+                else:
+                    reason = raw_reason
+
+                # 「改善提案」を抽出し、薬用が空なら一般をフォールバック
+                raw_suggestion = item.get("改善提案", "")
+                if isinstance(raw_suggestion, dict):
+                    suggestion = raw_suggestion.get(category_type, "").strip()
+                    if category_type == "薬用" and not suggestion:
+                        suggestion = raw_suggestion.get("一般", "").strip()
+                else:
+                    suggestion = raw_suggestion
+
+                # 「適正表現例」を抽出し、薬用が空リストなら一般をフォールバック
+                raw_examples = item.get("適正表現例", [])
+                if isinstance(raw_examples, dict):
+                    appropriate_examples = raw_examples.get(category_type, []) or []
+                    if category_type == "薬用" and not appropriate_examples:
+                        appropriate_examples = raw_examples.get("一般", []) or []
+                else:
+                    appropriate_examples = raw_examples or []
+
+                exclusion_list = item.get("除外表現", [])
 
                 for word in item.get("対象ワード", []):
                     for final_word in expand_placeholders(word, PLACEHOLDER_VALUES):

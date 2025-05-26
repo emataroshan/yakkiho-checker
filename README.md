@@ -19,36 +19,46 @@
         ・理由・改善提案・適正表現例の設定　
         ・用途区分・製品名フラグの設定と追加
 
+【 text_to_NGword.py 】
+    → 管理用テキストからNGワードJSONを作成するスクリプト
+
+
 ――――――――――――――――――――――――――――――――――――――――――――――――――――――――――――
 
 # 【 insert_flags.py 】　
 
 ## 概要
 
-`insert_flags.py` は、既存のテキストファイル内にある「用途区分」「製品名」のフラグ情報を、Excel ファイルの最新情報に置き換えるバッチスクリプトです。
+`insert_flags.py` は、既存のテキストファイル内にある「用途区分」「製品名」のフラグ情報を、Excel ファイルの最新情報に置き換えるバッチスクリプトです。GUI ダイアログで入出力フォルダと Excel ファイルを選択し、ログを出力しながら一括処理を行います。
 
-* GUI ダイアログで入力フォルダ・Excel ファイル・出力フォルダを選択
-* Excel を読み込み、(サブカテゴリ, グループ) ごとの行をキャッシュ
-* テキストを「サブカテゴリ」ブロックに分割し、各「グループ」ヘッダー以下を Excel 情報に更新
-* 処理状況はログに記録し、エラー時は画面表示
+**主な処理フロー**
 
-## 必要要件
+1. GUI ダイアログで以下を選択
+
+   * 処理対象のテキスト格納フォルダ
+   * フラグ定義の Excel ファイル
+   * 出力先フォルダ
+2. Excel を読み込み、(サブカテゴリ, グループ)→フラグ文字列 のキャッシュを生成
+3. 各テキストファイルを
+
+   * 「### x.x サブカテゴリ: YYY」ごとに分割
+   * 各「【グループi: Z】」ブロックをキャッシュ情報で置換
+4. 処理結果を出力フォルダへ書き出し、ログに記録
+
+---
+
+## 必要環境
 
 * Python 3.7 以上
-* pip インストール済み
+* pip
+* ライブラリ
 
-## 実行前の注意点
+  ```bash
+  pip install pandas openpyxl
+  ```
+* GUI ライブラリ: 標準で同梱されている `tkinter`
 
-* usage_set に新しく追加した用途（列名）を忘れずに追加
-* fixed_cols は必要に応じてカラム名を調整（Excelの構成が変わった場合）
-
-### Python ライブラリ
-
-```bash
-pip install pandas openpyxl
-```
-
-（`tkinter` は標準ライブラリとして同梱されています）
+---
 
 ## ファイル構成
 
@@ -56,48 +66,120 @@ pip install pandas openpyxl
 project/
 ├── insert_flags.py          # メインスクリプト
 ├── insert_flags.log         # 実行ログ (INFO, ERROR)
-├── examples/                # サンプルテキスト・Excel
-│   ├── texts/               # 入力用 .txt
-│   └── data.xlsx            # Excel フラグ定義
-└── README.md                # 本ファイル
+├── test_insert_flags.py     # pytest テストコード
+├── examples/                # サンプルデータ（任意）
+│   ├── texts/               # 入力用 .txt ファイル
+│   └── data.xlsx            # フラグ定義 Excel
+└── README.md                # 本ドキュメント
 ```
 
-## 使い方
+---
+
+## 実行方法 (GUI)
 
 ```bash
 python insert_flags.py
 ```
 
-1. 「新形式テキスト格納フォルダを選択」ダイアログで、置換対象の .txt ファイルが入ったフォルダを指定
-2. 「Excel を選択」ダイアログで、用途区分／製品名フラグ定義の Excel ファイルを指定
-3. 「出力先フォルダを選択」ダイアログで、更新後ファイルを書き出すフォルダを指定
-4. 処理が終了するとコンソールに完了メッセージが表示されます
+1. **新形式テキスト格納フォルダを選択**: 置換対象の `.txt` ファイルが入ったフォルダを指定
+2. **Excelファイルを選択**: 用途区分／製品名フラグ定義を持つ `.xlsx`/`.xls` ファイルを指定
+3. **出力先フォルダを選択**: 更新後ファイルを書き出すフォルダを指定
+4. 処理終了後、コンソールと `insert_flags.log` を確認
+
+---
+
+## 実行方法 (CLI)
+
+将来的に CLI モードで実行したい場合、以下のようにオプションを指定できます。※現バージョンは GUI モード推奨
+
+```bash
+python insert_flags.py \
+  -i <入力フォルダ> \
+  -e <Excelファイル> \
+  -o <出力フォルダ> \
+  [-l <ログファイル名>] \
+  [-v <ログレベル>]
+```
+
+オプション名:
+
+* `-i` / `--input`: テキスト格納フォルダ (必須)
+* `-e` / `--excel`: Excel ファイルパス (必須)
+* `-o` / `--output`: 出力フォルダ (必須)
+* `-l` / `--log`: ログファイル名 (デフォルト `insert_flags.log`)
+* `-v` / `--loglevel`: `DEBUG`/`INFO`/`WARNING`/`ERROR` (デフォルト `INFO`)
+
+---
 
 ## ログ
 
-* 全般ログ: `insert_flags.log` に INFO および ERROR レベルを記録
-* コンソール出力: ERROR レベルのみ表示
+* **ファイル出力**: `insert_flags.log` に INFO レベル以上を記録
+* **コンソール**: ERROR レベル以上を表示
 
-ログ例:
+```text
+2025-05-15 14:23:01 INFO: ✔ test1.txt -> output/test1.txt
+2025-05-15 14:23:02 ERROR: test2.txt: フラグ取得失敗: サブカテゴリ='A', グループ='X'
 ```
-2025-05-15 14:23:01 INFO: ✔ subcat1.txt を更新 -> output/subcat1.txt
-2025-05-15 14:23:02 ERROR: subcat2.txt: フラグ取得失敗: サブカテゴリ='A', グループ='X'
-```
+
+---
 
 ## カスタマイズ
 
-* `usage_set` に新しい用途区分を追加
-* Excel のカラム名が変更された場合は `fixed_cols` を更新
-* 正規表現パターンは `parse_sections()` 内で調整可能
+* `usage_set` に新用途カテゴリ（Excel の列名）を追加
+* `fixed_cols` に不要/追加された列名を調整
+* 正規表現パターンは `parse_sections()` / `replace_flags()` 内で変更可
 
-## 開発／テスト
+---
 
-* フラグ置換ロジックは `replace_flags()` を単体テスト
-* 入出力はモックしてテスト用フォルダで実行確認
+## テスト
+
+ユニットテストは pytest で実行します。
+
+```bash
+pytest -q
+```
+
+* **対象関数**: `build_excel_cache()`, `parse_sections()`, `replace_flags()`, `process_file()`, `process_all()`
+* テストファイル: `test_insert_flags.py`
+
+---
+
+## CI (GitHub Actions)
+
+`.github/workflows/python-tests.yml` を用意して、`feature/*` ブランチへの push および pull\_request 時に自動でテストを実行します。
+
+```yaml
+on:
+  push:
+    branches: ['feature/*']
+  pull_request:
+    branches: ['feature/*']
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+      - uses: actions/setup-python@v4
+        with:
+          python-version: '3.10'
+      - run: |
+          pip install pytest pandas openpyxl
+      - run: pytest -q
+```
+
+---
+
+## 今後の拡張
+
+* CLI 完全対応（`argparse` モードの強化）
+* 正規表現のさらなる堅牢化・フォーマット対応
+* テストカバレッジの拡充（Tkinter 部分のモック化など）
+
+---
 
 ## ライセンス
 
-MIT ライセンス
-
+MIT
 
 ――――――――――――――――――――――――――――――――――――――――――――――――――――――――――――――――
+

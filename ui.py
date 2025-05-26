@@ -118,6 +118,9 @@ def get_ng_words(
     selected_product: str
 ) -> Dict[str, Any]:
     
+    # 「一般」 or 「薬用」を区別
+    category_type = "一般" if selected_category == "一般化粧品" else "薬用"
+
     option_map = {
         "一般化粧品": "一般化粧品",
         "医薬部外品（薬用化粧品）": "薬用化粧品"
@@ -130,8 +133,8 @@ def get_ng_words(
     ng_dict = extract_ng_data_from_subcategories({
         "共通": subcats["共通"],
         option_map[selected_category]: subcats[option_map[selected_category]]
-    }, selected_usage, selected_product)
-
+    }, selected_usage, selected_product, category_type)
+    
     return {
         "ng_dict": ng_dict,
         "subcategories": subcats["共通"] + subcats[option_map[selected_category]]
