@@ -1,0 +1,40 @@
+name: CI
+
+on:
+  push:
+    branches: [ main, master ]
+  pull_request:
+    branches: [ main, master ]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+
+    steps:
+      # 1. リポジトリをチェックアウト
+      - uses: actions/checkout@v3
+
+      # 2. Python をセットアップ
+      - uses: actions/setup-python@v4
+        with:
+          python-version: '3.11'    # 必要に応じて変更
+
+      # 3. キャッシュ (オプション)
+      - name: Cache pip
+        uses: actions/cache@v3
+        with:
+          path: ~/.cache/pip
+          key: ${{ runner.os }}-pip-${{ hashFiles('**/requirements.txt') }}
+          restore-keys: |
+            ${{ runner.os }}-pip-
+
+      # 4. 依存関係をインストール
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install pytest pytest-cov
+
+      # 5. テスト実行
+      - name: Run tests
+        run: pytest --maxfail=1 --disable-warnings --cov=ui
