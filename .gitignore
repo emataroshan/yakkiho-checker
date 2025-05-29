@@ -1,0 +1,11 @@
+# Byte-compiled / cache
+__pycache__/
+
+# Log files
+*.log
+
+# VS Code settings
+.vscode/
+
+# Mac / Linux システムファイル
+.DS_Store
